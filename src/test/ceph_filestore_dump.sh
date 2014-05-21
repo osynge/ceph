@@ -42,7 +42,7 @@ for i in `seq 1 $NUM_OBJECTS`
 do
   NAME="${REP_NAME}$i"
   rm -f $DATADIR/$NAME
-  for i in `seq 1 10000`
+  for j in `seq 1 10000`
   do
     echo "This is the replicated data for $NAME" >> $DATADIR/$NAME
   done
@@ -54,7 +54,7 @@ for i in `seq 1 $NUM_OBJECTS`
 do
   NAME="${EC_NAME}$i"
   rm -f $DATADIR/$NAME
-  for i in `seq 1 10000`
+  for j in `seq 1 10000`
   do
     echo "This is the erasure coded data for $NAME" >> $DATADIR/$NAME
   done
