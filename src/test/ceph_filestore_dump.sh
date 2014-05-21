@@ -73,6 +73,75 @@ OBJREPPGS=`ls dev/*/current/${REPID}.*_head/${REP_NAME}* | awk -F / '{ print $4}
 OBJECPGS=`ls dev/*/current/${ECID}.*_head/${EC_NAME}* | awk -F / '{ print $4}' | sed 's/_head//' | sort -u`
 #echo OBJECT EC PGS: $OBJECPGS
 
+ONEPG=`echo $ALLREPPGS | awk '{ print $1 }'`
+#echo $ONEPG
+ONEOSD=`ls -d dev/*/current/${ONEPG}_head | awk -F / '{ print $2 }' | head -1`
+#echo $ONEOSD
+
+# On export can't use stdout to a terminal
+./ceph_filestore_dump --filestore-path dev/$ONEOSD --journal-path dev/$ONEOSD.journal --type export --pgid $ONEPG > /dev/tty 2> /tmp/tmp.$$
+if [ $? = "0" ];
+then
+  echo Should have failed, but got exit 0
+  ERRORS=`expr $ERRORS + 1`
+fi
+if head -1 /tmp/tmp.$$ | grep -- "stdout is a tty and no --file option specified" > /dev/null
+then
+  echo Correctly failed with message \"`head -1 /tmp/tmp.$$`\"
+else
+  echo Bad message to stderr \"`head -1 /tmp/tmp.$$`\"
+  ERRORS=`expr $ERRORS + 1`
+fi
+
+# On import can't specify a PG
+touch /tmp/foo.$$
+./ceph_filestore_dump --filestore-path dev/$ONEOSD --journal-path dev/$ONEOSD.journal --type import --pgid $ONEPG --file /tmp/foo.$$ 2> /tmp/tmp.$$
+if [ $? = "0" ];
+then
+  echo Should have failed, but got exit 0
+  ERRORS=`expr $ERRORS + 1`
+fi
+if head -1 /tmp/tmp.$$ | grep -- "--pgid option invalid with import" > /dev/null
+then
+  echo Correctly failed with message \"`head -1 /tmp/tmp.$$`\"
+else
+  echo Bad message to stderr \"`head -1 /tmp/tmp.$$`\"
+  ERRORS=`expr $ERRORS + 1`
+fi
+rm -f /tmp/foo.$$
+
+# On import input file not found
+./ceph_filestore_dump --filestore-path dev/$ONEOSD --journal-path dev/$ONEOSD.journal --type import --file /tmp/foo.$$ 2> /tmp/tmp.$$
+if [ $? = "0" ];
+then
+  echo Should have failed, but got exit 0
+  ERRORS=`expr $ERRORS + 1`
+fi
+if head -1 /tmp/tmp.$$ | grep -- "open: No such file or directory" > /dev/null
+then
+  echo Correctly failed with message \"`head -1 /tmp/tmp.$$`\"
+else
+  echo Bad message to stderr \"`head -1 /tmp/tmp.$$`\"
+  ERRORS=`expr $ERRORS + 1`
+fi
+
+# On import can't use stdin from a terminal
+./ceph_filestore_dump --filestore-path dev/$ONEOSD --journal-path dev/$ONEOSD.journal --type import --pgid $ONEPG < /dev/tty 2> /tmp/tmp.$$
+if [ $? = "0" ];
+then
+  echo Should have failed, but got exit 0
+  ERRORS=`expr $ERRORS + 1`
+fi
+if head -1 /tmp/tmp.$$ | grep -- "stdin is a tty and no --file option specified" > /dev/null
+then
+  echo Correctly failed with message \"`head -1 /tmp/tmp.$$`\"
+else
+  echo Bad message to stderr \"`head -1 /tmp/tmp.$$`\"
+  ERRORS=`expr $ERRORS + 1`
+fi
+
+rm -f /tmp/tmp.$$
+
 echo Checking pg info
 for pg in $ALLREPPGS $ALLECPGS
 do
