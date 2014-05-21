@@ -47,6 +47,28 @@ do
     echo "This is the replicated data for $NAME" >> $DATADIR/$NAME
   done
   ./rados -p $REP_POOL put $NAME $DATADIR/$NAME  2> /dev/null
+  ACNT=`expr $i - 1`
+  for k in `seq 0 $ACNT`
+  do
+    if [ $k = "0" ];
+    then
+      continue
+    fi
+    ./rados -p $REP_POOL setxattr $NAME key${i}-${k} val${i}-${k}
+  done
+  # Create omap header in all objects but REPobject1
+  if [ $i != "1" ];
+  then
+    ./rados -p $REP_POOL setomapheader $NAME hdr${i}
+  fi
+  for k in `seq 0 $ACNT`
+  do
+    if [ $k = "0" ];
+    then
+      continue
+    fi
+    ./rados -p $REP_POOL setomapval $NAME okey${i}-${k} oval${i}-${k}
+  done
 done
 
 echo "Creating $NUM_OBJECTS objects in erausre coded pool"
@@ -59,6 +81,16 @@ do
     echo "This is the erasure coded data for $NAME" >> $DATADIR/$NAME
   done
   ./rados -p $EC_POOL put $NAME $DATADIR/$NAME  2> /dev/null
+  ACNT=`expr $i - 1`
+  for k in `seq 0 $ACNT`
+  do
+    if [ $k = "0" ];
+    then
+      continue
+    fi
+    ./rados -p $EC_POOL setxattr $NAME key${i}-${k} val${i}-${k}
+  done
+  # Omap isn't supported in EC pools
 done
 
 ./stop.sh > /dev/null 2>&1
