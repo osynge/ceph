@@ -19,7 +19,7 @@ TESTDIR="/tmp/test.$$"
 DATADIR="/tmp/data.$$"
 
 echo -n "vstarting...."
-OSD=4 ./vstart.sh -l -n -d -o "mon_pg_warn_min_per_osd=1" > /dev/null 2>&1
+OSD=4 ./vstart.sh -l -n -d > /dev/null 2>&1
 echo DONE
 
 wait_for_health
@@ -210,7 +210,7 @@ then
     done
   done
 
-  OSD=4 ./vstart.sh -l -d -o "mon_pg_warn_min_per_osd=1" > /dev/null 2>&1
+  OSD=4 ./vstart.sh -l -d > /dev/null 2>&1
   wait_for_health
 
   echo "Checking erasure coded import data"
