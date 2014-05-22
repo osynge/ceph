@@ -17,6 +17,7 @@ NUM_OBJECTS=40
 ERRORS=0
 TESTDIR="/tmp/test.$$"
 DATADIR="/tmp/data.$$"
+JSONOBJ="/tmp/json.$$"
 
 echo -n "vstarting...."
 OSD=4 ./vstart.sh -l -n -d > /dev/null 2>&1
@@ -173,6 +174,93 @@ else
 fi
 
 rm -f /tmp/tmp.$$
+
+# Test --type list and generate json for all objects
+echo "Testing --type list by generating json for all objects"
+for pg in $OBJREPPGS $OBJECPGS
+do
+  OSDS=`ls -d dev/*/current/${pg}_head | awk -F / '{ print $2 }'`
+  for osd in $OSDS
+  do
+    ./ceph_filestore_dump --filestore-path dev/$osd --journal-path dev/$osd.journal --type list --pgid $pg >> /tmp/tmp.$$
+    if [ "$?" != "0" ];
+    then
+      echo "Bad exit status $? from --type list request"
+      ERRORS=`expr $ERRORS + 1`
+    fi
+  done
+done
+
+sort -u /tmp/tmp.$$ > $JSONOBJ
+rm -f /tmp/tmp.$$
+
+# Test get-bytes
+echo "Testing get-bytes and set-bytes"
+for file in ${DATADIR}/${REP_NAME}*
+do
+  rm -f /tmp/tmp.$$
+  BASENAME=`basename $file`
+  JSON=`grep \"$BASENAME\" $JSONOBJ`
+  for pg in $OBJREPPGS
+  do
+    OSDS=`ls -d dev/*/current/${pg}_head | awk -F / '{ print $2 }'`
+    for osd in $OSDS
+    do
+      if [ -e dev/$osd/current/${pg}_head/${BASENAME}_* ];
+      then
+        rm -f /tmp/getbytes.$$
+        ./ceph_filestore_dump --filestore-path dev/$osd --journal-path dev/$osd.journal  --pgid $pg "$JSON" get-bytes /tmp/getbytes.$$
+        if [ $? != "0" ];
+        then
+          echo "Bad exit status $?"
+          ERRORS=`expr $ERRORS + 1`
+          continue
+        fi
+        diff -q $file /tmp/getbytes.$$ 
+        if [ $? != "0" ];
+        then
+          echo "Data from get-bytes differ"
+          echo "Got:"
+          cat /tmp/getbyte.$$
+          echo "Expected:"
+          cat $file
+          ERRORS=`expr $ERRORS + 1`
+        fi
+        echo "put-bytes going into $file" > /tmp/setbytes.$$
+        ./ceph_filestore_dump --filestore-path dev/$osd --journal-path dev/$osd.journal  --pgid $pg "$JSON" set-bytes - < /tmp/setbytes.$$
+        if [ $? != "0" ];
+        then
+          echo "Bad exit status $? from set-bytes"
+          ERRORS=`expr $ERRORS + 1`
+        fi
+        ./ceph_filestore_dump --filestore-path dev/$osd --journal-path dev/$osd.journal  --pgid $pg "$JSON" get-bytes - > /tmp/testbytes.$$
+        if [ $? != "0" ];
+        then
+          echo "Bad exit status $? from get-bytes"
+          ERRORS=`expr $ERRORS + 1`
+        fi
+        diff -q /tmp/setbytes.$$ /tmp/testbytes.$$
+        if [ $? != "0" ];
+        then
+          echo "Data after set-bytes differ"
+          echo "Got:"
+          cat /tmp/testbyte.$$
+          echo "Expected:"
+          cat /tmp/setbytes.$$
+          ERRORS=`expr $ERRORS + 1`
+        fi
+        ./ceph_filestore_dump --filestore-path dev/$osd --journal-path dev/$osd.journal  --pgid $pg "$JSON" set-bytes < $file
+        if [ $? != "0" ];
+        then
+          echo "Bad exit status $? from set-bytes to restore object"
+          ERRORS=`expr $ERRORS + 1`
+        fi
+      fi
+    done
+  done
+done
+
+rm -f /tmp/getbytes.$$ /tmp/testbytes.$$ /tmp/setbytes.$$
 
 echo Checking pg info
 for pg in $ALLREPPGS $ALLECPGS
@@ -333,7 +421,7 @@ else
   echo "SKIPPING CHECKING IMPORT DATA DUE TO PREVIOUS FAILURES"
 fi
 
-rm -rf $DATADIR
+rm -rf $DATADIR $JSONOBJ
 
 if [ $ERRORS = "0" ];
 then
