@@ -262,6 +262,57 @@ done
 
 rm -f /tmp/getbytes.$$ /tmp/testbytes.$$ /tmp/setbytes.$$
 
+# Testing attrs
+echo "Testing list-attrs get-attr"
+for file in ${DATADIR}/${REP_NAME}*
+do
+  rm -f /tmp/tmp.$$
+  BASENAME=`basename $file`
+  JSON=`grep \"$BASENAME\" $JSONOBJ`
+  for pg in $OBJREPPGS
+  do
+    OSDS=`ls -d dev/*/current/${pg}_head | awk -F / '{ print $2 }'`
+    for osd in $OSDS
+    do
+      if [ -e dev/$osd/current/${pg}_head/${BASENAME}_* ];
+      then
+        ./ceph_filestore_dump --filestore-path dev/$osd --journal-path dev/$osd.journal  --pgid $pg "$JSON" list-attrs > /tmp/attrs.$$
+        if [ $? != "0" ];
+        then
+          echo "Bad exit status $?"
+          ERRORS=`expr $ERRORS + 1`
+          continue
+        fi
+        for key in `cat /tmp/attrs.$$`
+        do
+          ./ceph_filestore_dump --filestore-path dev/$osd --journal-path dev/$osd.journal  --pgid $pg "$JSON" get-attr $key > /tmp/val.$$
+          if [ $? != "0" ];
+          then
+            echo "Bad exit status $?"
+            ERRORS=`expr $ERRORS + 1`
+            continue
+          fi
+          if [ "$key" = "_" -o "$key" = "snapset" ];
+          then
+            continue
+          fi
+          OBJNUM=`echo $BASENAME | sed "s/$REP_NAME//"`
+          echo -n $key | sed 's/_key//' > /tmp/checkval.$$
+          cat /tmp/val.$$ | sed 's/val//' > /tmp/testval.$$
+          diff -q /tmp/testval.$$ /tmp/checkval.$$
+          if [ "$?" != "0" ];
+          then
+            echo Got `cat /tmp/val.$$` instead of val`cat /tmp/check.$$`
+            ERRORS=`expr $ERRORS + 1`
+          fi
+        done
+      fi
+    done
+  done
+done
+
+rm -rf /tmp/testval.$$ /tmp/checkval.$$ /tmp/val.$$ /tmp/attrs.$$
+
 echo Checking pg info
 for pg in $ALLREPPGS $ALLECPGS
 do
