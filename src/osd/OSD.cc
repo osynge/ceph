@@ -1787,10 +1787,6 @@ int OSD::shutdown()
   service.shutdown();
   op_tracker.on_shutdown();
 
-  // zap the Sessions for any loopback Connections
-  client_messenger->get_loopback_connection()->set_priv(NULL);
-  cluster_messenger->get_loopback_connection()->set_priv(NULL);
-
   class_handler->shutdown();
   client_messenger->shutdown();
   cluster_messenger->shutdown();
@@ -3852,7 +3848,7 @@ void OSD::_send_boot()
 {
   dout(10) << "_send_boot" << dendl;
   entity_addr_t cluster_addr = cluster_messenger->get_myaddr();
-  Connection *local_connection = cluster_messenger->get_loopback_connection().get();
+  ConnectionRef local_connection = cluster_messenger->get_loopback_connection();
   if (cluster_addr.is_blank_ip()) {
     int port = cluster_addr.get_port();
     cluster_addr = client_messenger->get_myaddr();
@@ -3860,10 +3856,10 @@ void OSD::_send_boot()
     cluster_messenger->set_addr_unknowns(cluster_addr);
     dout(10) << " assuming cluster_addr ip matches client_addr" << dendl;
   } else if (local_connection->get_priv() == NULL)
-      cluster_messenger->ms_deliver_handle_fast_connect(local_connection);
+    cluster_messenger->ms_deliver_handle_fast_connect(local_connection.get());
 
   entity_addr_t hb_back_addr = hb_back_server_messenger->get_myaddr();
-  local_connection = hb_back_server_messenger->get_loopback_connection().get();
+  local_connection = hb_back_server_messenger->get_loopback_connection();
   if (hb_back_addr.is_blank_ip()) {
     int port = hb_back_addr.get_port();
     hb_back_addr = cluster_addr;
@@ -3871,10 +3867,10 @@ void OSD::_send_boot()
     hb_back_server_messenger->set_addr_unknowns(hb_back_addr);
     dout(10) << " assuming hb_back_addr ip matches cluster_addr" << dendl;
   } else if (local_connection->get_priv() == NULL)
-      hb_back_server_messenger->ms_deliver_handle_fast_connect(local_connection);
+    hb_back_server_messenger->ms_deliver_handle_fast_connect(local_connection.get());
 
   entity_addr_t hb_front_addr = hb_front_server_messenger->get_myaddr();
-  local_connection = hb_front_server_messenger->get_loopback_connection().get();
+  local_connection = hb_front_server_messenger->get_loopback_connection();
   if (hb_front_addr.is_blank_ip()) {
     int port = hb_front_addr.get_port();
     hb_front_addr = client_messenger->get_myaddr();
@@ -3882,7 +3878,7 @@ void OSD::_send_boot()
     hb_front_server_messenger->set_addr_unknowns(hb_front_addr);
     dout(10) << " assuming hb_front_addr ip matches client_addr" << dendl;
   } else if (local_connection->get_priv() == NULL)
-      hb_front_server_messenger->ms_deliver_handle_fast_connect(local_connection);
+    hb_front_server_messenger->ms_deliver_handle_fast_connect(local_connection.get());
 
   MOSDBoot *mboot = new MOSDBoot(superblock, service.get_boot_epoch(),
                                  hb_back_addr, hb_front_addr, cluster_addr);
@@ -7793,15 +7789,16 @@ void OSDService::handle_misdirected_op(PG *pg, OpRequestRef op)
 
 class C_SendMap : public GenContext<ThreadPool::TPHandle&> {
   OSD *osd;
-  Message *m;
+  entity_name_t name;
   ConnectionRef con;
   OSDMapRef osdmap;
   epoch_t map_epoch;
 
 public:
-  C_SendMap(OSD *osd, Message *m, const ConnectionRef& con,
+  C_SendMap(OSD *osd, entity_name_t n, const ConnectionRef& con,
             OSDMapRef& osdmap, epoch_t map_epoch) :
-    osd(osd), m(m), con(con), osdmap(osdmap), map_epoch(map_epoch) {}
+    osd(osd), name(n), con(con), osdmap(osdmap), map_epoch(map_epoch) {
+  }
 
   void finish(ThreadPool::TPHandle& tp) {
     OSD::Session *session = static_cast<OSD::Session *>(
@@ -7810,7 +7807,7 @@ public:
       session->sent_epoch_lock.Lock();
     }
     osd->service.share_map(
-        m->get_source(),
+	name,
         con.get(),
         map_epoch,
         osdmap,
@@ -7824,20 +7821,21 @@ public:
 
 struct send_map_on_destruct {
   OSD *osd;
-  Message *m;
+  entity_name_t name;
   ConnectionRef con;
   OSDMapRef osdmap;
   epoch_t map_epoch;
   bool should_send;
   send_map_on_destruct(OSD *osd, Message *m,
-                       OSDMapRef& osdmap, epoch_t map_epoch) :
-                         osd(osd), m(m), con(m->get_connection()),
-                         osdmap(osdmap), map_epoch(map_epoch),
-                         should_send(true) {}
+                       OSDMapRef& osdmap, epoch_t map_epoch)
+    : osd(osd), name(m->get_source()), con(m->get_connection()),
+      osdmap(osdmap), map_epoch(map_epoch),
+      should_send(true) { }
   ~send_map_on_destruct() {
     if (!should_send)
       return;
-    osd->service.op_gen_wq.queue(new C_SendMap(osd, m, con, osdmap, map_epoch));
+    osd->service.op_gen_wq.queue(new C_SendMap(osd, name, con,
+					       osdmap, map_epoch));
   }
 };
 
@@ -8031,7 +8029,8 @@ void OSD::handle_replica_op(OpRequestRef& op, OSDMapRef& osdmap)
     op->sent_epoch = m->map_epoch;
     enqueue_op(pg, op);
   } else if (should_share_map) {
-    C_SendMap *send_map = new C_SendMap(this, m, m->get_connection(),
+    C_SendMap *send_map = new C_SendMap(this, m->get_source(),
+					m->get_connection(),
                                         osdmap, m->map_epoch);
     service.op_gen_wq.queue(send_map);
   }
