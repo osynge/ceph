@@ -8,8 +8,45 @@ import sys
 import re
 import string
 import logging
+# import json
 
 logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.WARNING)
+
+
+def get_pgs_from_dict(statdict, ID, EC=False):
+    # Get unsharded pgs
+    PGS = [str(p["pgid"]) for p in statdict["pg_stats"] if p["pgid"].find(str(ID) + ".") == 0]
+    if EC:
+        ORIGPGS = list(PGS)
+        PGS = []
+        for pgdict in statdict["pg_stats"]:
+            pg = pgdict["pgid"]
+            if pg in ORIGPGS:
+                assert(pgdict["state"] == "active+clean")
+                for shard in range(len(pgdict["acting"])):
+                    PGS.append(str(pg + "s{shard}").format(shard=shard) )
+    return PGS
+
+
+def get_osds_from_dict(statdict, pgs):
+    """Given a pg stat dictionary, return a list of OSDs which store that pg
+
+    Return list of strings in "osd#" format"""
+    osds = []
+    for pg in pgs:
+        for pgdict in statdict["pg_stats"]:
+            if pgdict["pgid"] == pg.split("s")[0]:
+                assert(pgdict["state"] == "active+clean")
+                if 's' in pg:
+                    shard = int(pg.split("s")[1])
+                    osds.append(pgdict["acting"][shard])
+                else:
+                    osds += pgdict["acting"]
+    raw = list(set(osds))
+    osds = []
+    for osd in raw:
+        osds += ["osd{num}".format(num=osd)]
+    return osds
 
 
 def wait_for_health():
@@ -282,6 +319,19 @@ def main():
 
     logging.debug(db)
 
+    """
+    wait_for_health()
+
+    jsontext = check_output("./ceph osd dump -f json".split(), stderr=nullfd)
+    osddump = json.loads(jsontext)
+
+    jsontext = check_output("./ceph pg dump_json".split(), stderr=nullfd)
+    pgdump = json.loads(jsontext)
+    ALLREPPGS = get_pgs(pgdump, REPID)
+    logging.info(ALLREPPGS)
+    ALLECPGS = get_pgs(pgdump, ECID, True)
+    logging.info(ALLECPGS)
+    """
 
     call("./stop.sh", stderr=nullfd)
 
@@ -302,6 +352,7 @@ def main():
     ONEPG = ALLREPPGS[0]
     logging.debug(ONEPG)
     osds = get_osds(ONEPG, OSDDIR)
+    # osds = get_osds(pgdump, [ONEPG])
     ONEOSD = osds[0]
     logging.debug(ONEOSD)
 
@@ -332,6 +383,7 @@ def main():
     ALLPGS = OBJREPPGS + OBJECPGS
     for pg in ALLPGS:
         OSDS = get_osds(pg, OSDDIR)
+        # OSDS = get_osds(pgdump, [pg])
         for osd in OSDS:
             cmd = (CFSD_PREFIX + "--type list --pgid {pg}").format(osd=osd, pg=pg)
             tmpfd = open(TMPFILE, "a")
@@ -356,6 +408,7 @@ def main():
         SETNAME = "/tmp/setbytes.{pid}".format(pid=pid)
         for pg in OBJREPPGS:
             OSDS = get_osds(pg, OSDDIR)
+            # OSDS = get_osds(pgdump, [pg])
             for osd in OSDS:
                 DIR = os.path.join(OSDDIR, os.path.join(osd, os.path.join("current", "{pg}_head".format(pg=pg))))
                 fname = [f for f in os.listdir(DIR) if os.path.isfile(os.path.join(DIR, f)) and string.find(f, basename + "_") == 0]
@@ -440,6 +493,7 @@ def main():
         JSON = JSON[0]
         for pg in OBJREPPGS:
             OSDS = get_osds(pg, OSDDIR)
+            # OSDS = get_osds(pgdump, [pg])
             for osd in OSDS:
                 DIR = os.path.join(OSDDIR, os.path.join(osd, os.path.join("current", "{pg}_head".format(pg=pg))))
                 fname = [f for f in os.listdir(DIR) if os.path.isfile(os.path.join(DIR, f)) and string.find(f, basename + "_") == 0]
@@ -487,6 +541,7 @@ def main():
     print "Test pg info"
     for pg in ALLREPPGS + ALLECPGS:
         for osd in get_osds(pg, OSDDIR):
+        # for osd in get_osds(pgdump, [pg]):
             cmd = (CFSD_PREFIX + "--type info --pgid {pg} | grep '\"pgid\": \"{pg}\"'").format(osd=osd, pg=pg)
             logging.debug(cmd)
             ret = call(cmd, shell=True, stdout=nullfd)
@@ -497,6 +552,7 @@ def main():
     print "Test pg logging"
     for pg in ALLREPPGS + ALLECPGS:
         for osd in get_osds(pg, OSDDIR):
+        # for osd in get_osds(pgdump, [pg]):
             tmpfd = open(TMPFILE, "w")
             cmd = (CFSD_PREFIX + "--type log --pgid {pg}").format(osd=osd, pg=pg)
             logging.debug(cmd)
@@ -528,6 +584,7 @@ def main():
         os.mkdir(os.path.join(TESTDIR, osd))
     for pg in ALLREPPGS + ALLECPGS:
         for osd in get_osds(pg, OSDDIR):
+        # for osd in get_osds(pgdump, [pg]):
             mydir = os.path.join(TESTDIR, osd)
             fname = os.path.join(mydir, pg)
             cmd = (CFSD_PREFIX + "--type export --pgid {pg} --file {file}").format(osd=osd, pg=pg, file=fname)
@@ -543,6 +600,7 @@ def main():
     RM_ERRORS = 0
     for pg in ALLREPPGS + ALLECPGS:
         for osd in get_osds(pg, OSDDIR):
+        # for osd in get_osds(pgdump, [pg]):
             cmd = (CFSD_PREFIX + "--type remove --pgid {pg}").format(pg=pg, osd=osd)
             logging.debug(cmd)
             ret = call(cmd, shell=True, stdout=nullfd)
